@@ -23,6 +23,15 @@ from audio.transcriber import transcribe_audio
 from audio.tts import speak_text
 from config import validate_config
 
+# Import WebSocket server
+try:
+    from backend.ws_server import start_server_thread, send_to_ui, stop_server
+    WS_AVAILABLE = True
+except ImportError:
+    print("⚠️  WebSocket server not available. Install: pip install websockets", flush=True)
+    WS_AVAILABLE = False
+    send_to_ui = None
+
 
 def main():
     """Main agent loop."""
@@ -41,6 +50,15 @@ def main():
     print("\nSay 'Hey MiniMe' to activate!", flush=True)
     print("Press Ctrl+C to exit\n", flush=True)
     
+    # Start WebSocket server for frontend communication
+    if WS_AVAILABLE:
+        try:
+            start_server_thread()
+            print("✅ WebSocket server started on ws://localhost:8081", flush=True)
+        except Exception as e:
+            print(f"⚠️  Could not start WebSocket server: {e}", flush=True)
+            print("⚠️  Continuing without frontend connection...\n", flush=True)
+    
     detector = None
     audio_data = None
     
@@ -55,12 +73,18 @@ def main():
             try:
                 # Step 1: Wait for wake word
                 print("👂 Listening for wake word...", flush=True)
+                if send_to_ui:
+                    send_to_ui({"event": "listening"})
+                
                 if not detector.listen_for_wake_word():
                     print("[EXIT] Wake word listener stopped.", flush=True)
                     break
                 
                 print("🔔 Wake word detected! Hey MiniMe!\n", flush=True)
                 print("💬 Starting continuous conversation mode...\n", flush=True)
+                
+                if send_to_ui:
+                    send_to_ui({"event": "wake"})
                 
                 # Reset conversation when wake word is detected (new conversation session)
                 reset_conversation()
@@ -80,6 +104,8 @@ def main():
                     
                     # Step 3: Transcribe
                     print("[STEP 3] Starting transcription...", flush=True)
+                    if send_to_ui:
+                        send_to_ui({"event": "thinking"})
                     user_text = transcribe_audio(audio_data)
                     print(f"[STEP 3] Transcription: '{user_text}'\n", flush=True)
                     
@@ -97,12 +123,16 @@ def main():
                         print("😴 Sleep command detected!", flush=True)
                         sleep_msg = get_sleep_message()
                         print("🔊 MiniMe saying goodnight...\n", flush=True)
+                        if send_to_ui:
+                            send_to_ui({"event": "sleep"})
                         try:
                             speak_text(sleep_msg)
                         except Exception:
                             pass  # Continue even if TTS fails
                         reset_conversation()  # Reset conversation for next session
                         conversation_active = False
+                        if send_to_ui:
+                            send_to_ui({"event": "idle"})
                         print("-" * 60, flush=True)
                         print("MiniMe is sleeping. Say 'Hey MiniMe' to wake me up again!\n", flush=True)
                         break
@@ -145,6 +175,11 @@ def main():
             detector.cleanup()
         if audio_data:
             audio_data.close()
+        if WS_AVAILABLE:
+            try:
+                stop_server()
+            except Exception:
+                pass
         print("\n👋 MiniMe shutting down. Goodbye!", flush=True)
 
 

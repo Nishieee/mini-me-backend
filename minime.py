@@ -24,15 +24,6 @@ from audio.tts import speak_text
 from config import validate_config
 
 
-def cleanup_temp_file(file_path):
-    """Remove temporary audio file."""
-    try:
-        if file_path and os.path.exists(file_path):
-            os.unlink(file_path)
-    except Exception as e:
-        print(f"Warning: Could not delete temp file {file_path}: {e}", flush=True)
-
-
 def main():
     """Main agent loop."""
     print("=" * 60, flush=True)
@@ -51,7 +42,7 @@ def main():
     print("Press Ctrl+C to exit\n", flush=True)
     
     detector = None
-    audio_file = None
+    audio_data = None
     
     try:
         # Initialize wake word detector
@@ -69,27 +60,36 @@ def main():
                     break
                 
                 print("🔔 Wake word detected! Hey MiniMe!\n", flush=True)
+                print("💬 Starting continuous conversation mode...\n", flush=True)
                 
                 # Reset conversation when wake word is detected (new conversation session)
                 reset_conversation()
                 
                 # Continuous conversation loop until sleep command
                 conversation_active = True
+                turn_count = 0
                 while conversation_active:
+                    turn_count += 1
                     # Step 2: Record audio
-                    print("[STEP 2] Starting audio recording...", flush=True)
-                    audio_file = record_until_silence()
-                    print(f"[STEP 2] Recording saved\n", flush=True)
+                    if turn_count == 1:
+                        print("[STEP 2] Starting audio recording...", flush=True)
+                    else:
+                        print(f"[TURN {turn_count}] Recording your response...", flush=True)
+                    audio_data = record_until_silence()
+                    print(f"[STEP 2] Recording complete\n", flush=True)
                     
                     # Step 3: Transcribe
                     print("[STEP 3] Starting transcription...", flush=True)
-                    user_text = transcribe_audio(audio_file)
+                    user_text = transcribe_audio(audio_data)
                     print(f"[STEP 3] Transcription: '{user_text}'\n", flush=True)
+                    
+                    # Close audio data buffer
+                    if audio_data:
+                        audio_data.close()
+                        audio_data = None
                     
                     if not user_text:
                         print("⚠️  No speech detected. Listening again...\n", flush=True)
-                        cleanup_temp_file(audio_file)
-                        audio_file = None
                         continue
                     
                     # Check for sleep command
@@ -101,8 +101,6 @@ def main():
                             speak_text(sleep_msg)
                         except Exception:
                             pass  # Continue even if TTS fails
-                        cleanup_temp_file(audio_file)
-                        audio_file = None
                         reset_conversation()  # Reset conversation for next session
                         conversation_active = False
                         print("-" * 60, flush=True)
@@ -124,12 +122,8 @@ def main():
                         print("⚠️  MiniMe response generated but could not be spoken.", flush=True)
                         print("⚠️  Response was: " + mini_response[:100] + "...\n", flush=True)
                     
-                    # Cleanup
-                    cleanup_temp_file(audio_file)
-                    audio_file = None
-                    
                     # Continue conversation - wait for next input
-                    print("💬 Listening for your response... (say 'ok bye' or 'goodbye' to end conversation)\n", flush=True)
+                    print("💬 Conversation continues... (speak now, or say 'ok bye'/'goodbye' to end)\n", flush=True)
                 
             except KeyboardInterrupt:
                 print("\n\n⚠️  Interrupted by user. Shutting down...", flush=True)
@@ -139,8 +133,9 @@ def main():
                 print("Full traceback:", flush=True)
                 traceback.print_exc()
                 print("", flush=True)
-                cleanup_temp_file(audio_file)
-                audio_file = None
+                if audio_data:
+                    audio_data.close()
+                    audio_data = None
                 # Continue listening after error
                 continue
     
@@ -148,7 +143,8 @@ def main():
         # Cleanup
         if detector:
             detector.cleanup()
-        cleanup_temp_file(audio_file)
+        if audio_data:
+            audio_data.close()
         print("\n👋 MiniMe shutting down. Goodbye!", flush=True)
 
 

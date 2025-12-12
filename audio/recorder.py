@@ -2,16 +2,13 @@
 """
 MiniMe Audio Recorder Module
 Records audio from microphone after wake word detection.
+Returns audio data in memory (no disk I/O).
 """
 
 import contextlib
 import io
-import os
 import struct
-import sys
-import tempfile
 import wave
-from pathlib import Path
 
 import pyaudio
 
@@ -21,7 +18,6 @@ from config import (
     AUDIO_RATE,
     AUTO_STOP_DURATION,
     MAX_RECORDING_DURATION,
-    PROJECT_ROOT,
     SILENCE_DURATION,
     SILENCE_THRESHOLD,
 )
@@ -38,12 +34,11 @@ def record_until_silence(max_duration=MAX_RECORDING_DURATION):
         max_duration (float): Maximum recording duration in seconds
         
     Returns:
-        str: Path to the temporary WAV file containing the recorded audio
+        io.BytesIO: In-memory WAV file containing the recorded audio
         
     Raises:
         Exception: If recording fails
     """
-    temp_file = None
     pa = None
     stream = None
     
@@ -51,11 +46,6 @@ def record_until_silence(max_duration=MAX_RECORDING_DURATION):
         # Suppress PortAudio macOS warnings
         with contextlib.redirect_stderr(io.StringIO()):
             pa = pyaudio.PyAudio()
-        
-        # Create temporary WAV file
-        temp_fd, temp_path = tempfile.mkstemp(suffix='.wav', dir=PROJECT_ROOT)
-        os.close(temp_fd)
-        temp_file = temp_path
         
         # Open audio stream (suppress PortAudio warnings)
         with contextlib.redirect_stderr(io.StringIO()):
@@ -111,23 +101,25 @@ def record_until_silence(max_duration=MAX_RECORDING_DURATION):
         if frame_count >= max_frames:
             print(f"✅ Recording complete (max duration reached)", flush=True)
         
-        # Stop stream and save
+        # Stop stream
         stream.stop_stream()
         stream.close()
         
-        # Save to WAV file
-        wf = wave.open(temp_file, 'wb')
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        wf = wave.open(wav_buffer, 'wb')
         wf.setnchannels(AUDIO_CHANNELS)
         wf.setsampwidth(pa.get_sample_size(FORMAT))
         wf.setframerate(AUDIO_RATE)
         wf.writeframes(b''.join(frames))
         wf.close()
         
-        return temp_file
+        # Reset buffer position to beginning for reading
+        wav_buffer.seek(0)
+        
+        return wav_buffer
         
     except Exception as e:
-        if temp_file and os.path.exists(temp_file):
-            os.unlink(temp_file)
         raise Exception(f"Error recording audio: {str(e)}") from e
     finally:
         if stream:
